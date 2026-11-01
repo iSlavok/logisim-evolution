@@ -1,0 +1,180 @@
+#
+# Logisim-evolution - digital logic design tool and simulator
+# Copyright by the Logisim-evolution developers
+#
+# https://github.com/logisim-evolution/
+#
+# This is free software released under GNU GPLv3 license
+#
+
+# Builds the release packages of this fork and attaches them to a draft GitHub release.
+# The jobs follow nightly.yml.
+
+name: "Fork release"
+
+on:
+  push:
+    tags: [ 'v*-fork*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  JDK_VERSION: 21
+  JDK_DISTRO: 'temurin'
+
+jobs:
+  version:
+    name: "Read version"
+    runs-on: ubuntu-26.04
+    outputs:
+      lse_name: ${{ steps.v.outputs.lse_name }}
+      lse_version: ${{ steps.v.outputs.lse_version }}
+      lse_version_short: ${{ steps.v.outputs.lse_version_short }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        run: |
+          set -euo pipefail
+          declare -r version_prop=$(grep '^version\s*=.*' gradle.properties | awk '{print $3}')
+          echo "lse_version=$(echo "${version_prop}" | awk '{gsub("-","", $0); print}')" >> $GITHUB_OUTPUT
+          echo "lse_version_short=$(echo "${version_prop}" | awk '{ split($0, v, "-")} {print v[1]}')" >> $GITHUB_OUTPUT
+          echo "lse_name=$(fgrep name gradle.properties | awk '{print $3}')" >> $GITHUB_OUTPUT
+
+  build_linux:
+    name: "Linux ${{ matrix.arch }}"
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-26.04
+            arch: x64
+          - os: ubuntu-26.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JDK_VERSION }}
+          distribution: ${{ env.JDK_DISTRO }}
+      - name: "Test"
+        if: matrix.arch == 'x64'
+        continue-on-error: true
+        run: |
+          chmod +x gradlew
+          ./gradlew test -x checkstyleMain -x checkstyleTest
+      - name: "Build JAR"
+        if: matrix.arch == 'x64'
+        run: ./gradlew shadowJar
+      - name: "Build DEB and RPM"
+        run: |
+          chmod +x gradlew
+          ./gradlew createDeb -x checkstyleMain -x checkstyleTest
+          ./gradlew createRpm -x checkstyleMain -x checkstyleTest
+      - name: "Build sources JAR"
+        if: matrix.arch == 'x64'
+        run: ./gradlew sourcesJar
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            build/dist/*.deb
+            build/dist/*.rpm
+            build/libs/*-all.jar
+            build/libs/*-src.jar
+
+  build_macos:
+    name: "macOS"
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JDK_VERSION }}
+          distribution: ${{ env.JDK_DISTRO }}
+      - name: "Build aarch64 DMG"
+        run: |
+          chmod +x gradlew
+          ./gradlew createDmg -x checkstyleMain -x checkstyleTest
+      - uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JDK_VERSION }}
+          distribution: ${{ env.JDK_DISTRO }}
+          architecture: "x64"
+      - name: "Build x86_64 DMG"
+        run: ./gradlew createDmg -x checkstyleMain -x checkstyleTest
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: build/dist/*.dmg
+
+  build_windows:
+    name: "Windows ${{ matrix.arch }}"
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: amd64
+          - os: windows-11-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JDK_VERSION }}
+          distribution: ${{ env.JDK_DISTRO }}
+      - name: "Install WiX Toolset 3"
+        if: matrix.arch == 'aarch64'
+        continue-on-error: true
+        run: |
+          choco install wixtoolset -y --no-progress
+          Add-Content $env:GITHUB_PATH "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
+      - name: "Build MSI"
+        continue-on-error: ${{ matrix.arch == 'aarch64' }}
+        run: .\gradlew.bat createMsi -x checkstyleMain -x checkstyleTest
+      - name: "Build portable ZIP"
+        run: .\gradlew.bat createWindowsPortableZip -x checkstyleMain -x checkstyleTest
+      - name: "Name the MSI after the full version"
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in build/dist/*-${{ needs.version.outputs.lse_version_short }}-*.msi; do
+            mv "$f" "${f/-${{ needs.version.outputs.lse_version_short }}-/-${{ needs.version.outputs.lse_version }}-}"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ matrix.arch }}
+          path: |
+            build/dist/*.msi
+            build/dist/*.zip
+
+  release:
+    name: "Draft release"
+    needs: [ version, build_linux, build_macos, build_windows ]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: "Create draft release"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          tag="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then tag="v$(grep '^version' gradle.properties | awk '{print $3}')"; fi
+          notes=".github/fork-release-notes.md"
+          gh release view "$tag" >/dev/null 2>&1 && gh release delete "$tag" --yes
+          gh release create "$tag" dist/* --draft --verify-tag \
+            --title "Logisim-evolution ${tag#v} (unofficial fork build)" --notes-file "$notes"

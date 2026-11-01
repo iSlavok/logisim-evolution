@@ -4,6 +4,16 @@
 
 # Logisim-evolution #
 
+> [!IMPORTANT]
+> **This is an unofficial fork** of [Logisim-evolution](https://github.com/logisim-evolution/logisim-evolution),
+> maintained by [@iSlavok](https://github.com/iSlavok). It is not affiliated with or endorsed by the
+> Logisim-evolution developers. Please report problems with these builds
+> [here](https://github.com/iSlavok/logisim-evolution/issues), not upstream.
+>
+> Changes compared to upstream are listed in the fork section at the top of [CHANGES.md](CHANGES.md).
+> Builds are on the [Releases](https://github.com/iSlavok/logisim-evolution/releases) page.
+
+
 * **Table of contents**
   * [Features](#features)
   * [Requirements](#requirements)

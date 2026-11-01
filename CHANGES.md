@@ -2,6 +2,12 @@
 
 # Changes #
 
+* v5.1.0-fork1 (2026-11-01), unofficial build by @iSlavok
+  * Based on upstream `main` at 46295a9e2 (Logisim-evolution 5.1.0-dev), which includes every change
+    listed under `@dev` below.
+  * Added the simulation tree fix from [#3153] (also listed under `@dev` below).
+  * Set the version to `5.1.0-fork1`, added this notice and the README notice, and added a release
+    workflow that builds the packages for this fork.
 * @dev (????-??-??)
   * Fixed the simulation tree duplicating and leaking nodes, which made editing designs with nested
     subcircuits slower and slower [#3152] (@iSlavok).
