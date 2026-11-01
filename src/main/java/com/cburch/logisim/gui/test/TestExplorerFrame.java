@@ -222,7 +222,8 @@ public class TestExplorerFrame extends LFrame.SubWindow {
         Integer.toString(failed), Integer.toString(other));
     if (suite.isQueueRunning()) {
       final var progress = suite.getQueueProgress();
-      text += " · " + S.get("testExplorerProgress", Integer.toString(progress[0] + 1), Integer.toString(progress[1]));
+      text += " · " + S.get("testExplorerProgress", Integer.toString(progress[0]), Integer.toString(progress[1]),
+          Integer.toString(TestEngine.shared().getThreads()));
     }
     summary.setText(text);
     final var store = suite.getBindings().getStoreFile();
@@ -306,6 +307,7 @@ public class TestExplorerFrame extends LFrame.SubWindow {
       case ERROR -> S.get("testStatusError", model.getError());
       case NOT_RUN -> suite.isQueued(model) ? S.get("testStatusQueued") : S.get("testStatusNotRun");
       case RUNNING -> {
+        if (suite.isQueued(model)) yield S.get("testStatusQueued");
         final var rowsTotal = Math.max(1, model.getRowCount());
         final var done = model.getPass() + model.getFail();
         yield S.get("testStatusRunning", Integer.toString((int) (100L * done / rowsTotal)));

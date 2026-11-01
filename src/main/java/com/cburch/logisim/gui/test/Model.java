@@ -19,6 +19,7 @@ import com.cburch.logisim.util.EventSourceWeakSupport;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import javax.swing.SwingUtilities;
 
@@ -45,13 +46,17 @@ public class Model {
   private final Circuit circuit;
   private final Supplier<String> designDigest;
   private final UpdateResultSort myUpdateResultSort = new UpdateResultSort();
+  /** Set while an update of the sorted rows waits on the GUI thread, so rows share one update. */
+  private final AtomicBoolean sortPending = new AtomicBoolean();
   private final ArrayList<Integer> failed = new ArrayList<>();
   private final ArrayList<Integer> passed = new ArrayList<>();
   private final ArrayList<Integer> sortedIndices = new ArrayList<>();
   private final ArrayList<Integer> allIndices = new ArrayList<>();
   private final ArrayList<Integer> failedSortedIndices = new ArrayList<>();
   private boolean running;
-  private TestThread tester;
+  private TestEngine.Job job;
+  /** Receives the rows of the current run; results of older runs are ignored. */
+  private volatile Sink sink;
   private int numPass = 0;
   private int numFail = 0;
   private TestVector vec = null;
@@ -281,7 +286,7 @@ public class Model {
       }
     }
     if (!SwingUtilities.isEventDispatchThread()) {
-      SwingUtilities.invokeLater(myUpdateResultSort);
+      if (!sortPending.getAndSet(true)) SwingUtilities.invokeLater(myUpdateResultSort);
     } else {
       updateResultSort();
     }
@@ -358,20 +363,36 @@ public class Model {
       return;
     }
     final var digest = designDigest.get();
+    final var newSink = new Sink(vec);
     synchronized (this) {
       numPass = numFail = 0;
       failed.clear();
       passed.clear();
       Arrays.fill(results, null);
       updateSortedIndices();
-      tester = new TestThread(this);
+      sink = newSink;
       running = true;
       completed = false;
       outdated = false;
       runDigest = digest;
       runNanos = 0;
       runStarted = System.nanoTime();
-      tester.start();
+    }
+    try {
+      final var started = TestEngine.shared().submit(project, circuit, vec, newSink);
+      synchronized (this) {
+        if (sink == newSink) job = started;
+        else started.cancel(); // stopped meanwhile
+      }
+    } catch (TestException e) {
+      synchronized (this) {
+        running = false;
+        sink = null;
+        runDigest = null;
+      }
+      error = e.getMessage();
+      fireTestingChanged();
+      throw e;
     }
     fireTestResultsChanged();
     fireTestingChanged();
@@ -382,29 +403,57 @@ public class Model {
     synchronized (this) {
       if (!running) return;
       running = false;
-      if (tester != null) tester.cancel();
-      tester = null;
+      if (job != null) job.cancel();
+      job = null;
+      sink = null;
     }
     fireTestingChanged();
   }
 
-  /** Called by a test thread when it ends. */
-  void testerFinished(TestThread thread, boolean allRowsRan) {
+  /** Called when a run ends. */
+  private void runFinished(Sink finishedSink, boolean allRowsRan, String simulationError) {
     SwingUtilities.invokeLater(() -> {
       synchronized (this) {
-        if (tester != thread) return; // stopped or replaced meanwhile
+        if (sink != finishedSink) return; // stopped or replaced meanwhile
         updateResultSort();
         running = false;
-        tester = null;
+        // the time the rows ran, not counting the wait for a free thread
+        final var nanos = job == null ? System.nanoTime() - runStarted : job.getNanos();
+        job = null;
+        sink = null;
         completed = allRowsRan;
-        if (allRowsRan) runNanos = System.nanoTime() - runStarted;
+        if (allRowsRan) runNanos = Math.max(1, nanos);
+        if (simulationError != null) error = simulationError;
       }
       fireTestingChanged();
     });
   }
 
+  /** Feeds the rows of one run into this model. */
+  private final class Sink implements TestEngine.RowSink {
+    private final TestVector vector;
+
+    Sink(TestVector vector) {
+      this.vector = vector;
+    }
+
+    @Override
+    public boolean rowDone(int row, ArrayList<TestVectorEvaluator.LineReport> report) {
+      return sink == this && setResult(vector, row, report);
+    }
+
+    @Override
+    public void finished(boolean allRowsRan, String simulationError) {
+      runFinished(this, allRowsRan, simulationError);
+    }
+  }
+
   private void updateResultSort() {
     if (vec == null) return;
+    if (failed.size() + passed.size() == numPass + numFail) {
+      fireTestResultsChanged();
+      return;
+    }
     for (int i = failed.size() + passed.size(); i < numPass + numFail; i++) {
       if (results[i] == null) passed.add(i);
       else failed.add(i);
@@ -467,6 +516,7 @@ public class Model {
 
     @Override
     public void run() {
+      sortPending.set(false);
       updateResultSort();
     }
   }

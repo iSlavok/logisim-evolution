@@ -149,6 +149,16 @@
         <dt><tt>--test-dir <i>FOLDER</i></tt></dt>
         <dd><p>With <tt>--test-all</tt>, takes the vectors from <i>FOLDER</i>, as <tt><i>CIRCUIT</i>.txt</tt>.</p></dd>
 
+        <dt><tt>--test-threads <i>COUNT</i></tt></dt>
+        <dd>
+          <p>
+            With <tt>--test-all</tt>, the number of threads to run tests on; the default is one per
+            processor core. Circuits made only of wiring, gates, plexers, arithmetic, memory (except
+            non-volatile RAM) and simple displays are tested in parallel, their rows split between
+            the threads; other circuits are tested alone, row after row.
+          </p>
+        </dd>
+
         <dt><tt>--junit <i>FILE</i></tt></dt>
         <dd><p>With <tt>--test-all</tt>, also writes the results to <i>FILE</i> as JUnit XML.</p></dd>
 

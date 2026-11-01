@@ -22,7 +22,6 @@ import com.cburch.logisim.proj.ProjectListener;
 import com.cburch.logisim.proj.Projects;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -58,17 +57,13 @@ public class TestSuite {
   private final Map<Circuit, Model> models = new HashMap<>();
   private final Map<Circuit, String> circuitNames = new HashMap<>();
   private final List<Listener> listeners = new CopyOnWriteArrayList<>();
-  private final ArrayDeque<Model> queue = new ArrayDeque<>();
+  /** Models started by the last {@link #run}, to report its progress. */
+  private final Set<Model> batch = new HashSet<>();
   private final MyListener myListener = new MyListener();
   private final Timer designCheck;
   private final Timer fileCheck;
   private TestBindings bindings;
   private LogisimFile file;
-  private Model queueCurrent;
-  private int queueTotal;
-  private int queueDone;
-  /** Set while the queue starts a model, whose events then do not mean the run ended. */
-  private boolean starting;
 
   public TestSuite(Project project) {
     this.project = project;
@@ -140,67 +135,53 @@ public class TestSuite {
     }
   }
 
-  /** Runs the given circuits' tests one after the other, after any that are already queued. */
+  /**
+   * Runs the given circuits' tests. They share the threads of {@link TestEngine#shared()}, in the
+   * order given.
+   */
   public void run(Collection<Circuit> circuits) {
-    if (queueCurrent == null && queue.isEmpty()) {
-      queueTotal = 0;
-      queueDone = 0;
-    }
+    if (!isQueueRunning()) batch.clear();
     for (final var circuit : circuits) {
       final var model = getModel(circuit);
-      if (model.getStatus() == Model.Status.NO_VECTOR || queue.contains(model) || model == queueCurrent) continue;
-      queue.add(model);
-      queueTotal++;
-    }
-    if (queueCurrent == null) startNext();
-    fireChanged();
-  }
-
-  /** Stops the queue and every running test. */
-  public void stopAll() {
-    queue.clear();
-    final var current = queueCurrent;
-    queueCurrent = null;
-    for (final var model : models.values()) model.stop();
-    if (current != null) fireChanged();
-  }
-
-  public boolean isQueueRunning() {
-    return queueCurrent != null;
-  }
-
-  public boolean isQueued(Model model) {
-    return queue.contains(model);
-  }
-
-  /** Circuits finished in the current queue run, and how many it has in all. */
-  public int[] getQueueProgress() {
-    return new int[] {queueDone, queueTotal};
-  }
-
-  private void startNext() {
-    while (!queue.isEmpty()) {
-      final var model = queue.poll();
-      queueCurrent = model;
-      starting = true;
+      if (model.getStatus() == Model.Status.NO_VECTOR || model.isRunning()) continue;
       try {
         model.start();
       } catch (TestException e) {
-        logger.warn("Could not start the test of {}: {}", model.getCircuit().getName(), e.getMessage());
-      } finally {
-        starting = false;
+        logger.warn("Could not start the test of {}: {}", circuit.getName(), e.getMessage());
       }
-      if (model.isRunning()) return;
-      queueDone++;
+      batch.add(model);
     }
-    queueCurrent = null;
+    fireChanged();
+  }
+
+  /** Stops every running test. */
+  public void stopAll() {
+    for (final var model : models.values()) model.stop();
+  }
+
+  /** Whether a test started by {@link #run} still runs. */
+  public boolean isQueueRunning() {
+    for (final var model : batch) {
+      if (model.isRunning()) return true;
+    }
+    return false;
+  }
+
+  /** Whether the model's run waits for a thread. */
+  public boolean isQueued(Model model) {
+    return model.isRunning() && model.getPass() + model.getFail() == 0;
+  }
+
+  /** Tests finished among those started by the last {@link #run}, and how many it started. */
+  public int[] getQueueProgress() {
+    var done = 0;
+    for (final var model : batch) {
+      if (!model.isRunning()) done++;
+    }
+    return new int[] {done, batch.size()};
   }
 
   private void testingChanged() {
-    if (!starting && queueCurrent != null && !queueCurrent.isRunning()) {
-      queueDone++;
-      startNext();
-    }
     fireChanged();
   }
 
@@ -284,7 +265,7 @@ public class TestSuite {
       circuitNames.remove(circuit);
       final var model = models.remove(circuit);
       if (model != null) {
-        queue.remove(model);
+        batch.remove(model);
         model.stop();
       }
     }

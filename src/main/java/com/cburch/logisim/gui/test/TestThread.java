@@ -26,21 +26,6 @@ public class TestThread extends UniquelyNamedThread {
   private final CircuitState circuitState;
   private final TestVector vector;
   private final TestVectorEvaluator evaluator;
-  private Model model;
-  private volatile boolean canceled = false;
-
-  public TestThread(Model model) throws TestException {
-    super("TestThread-Model");
-    this.model = model;
-
-    this.project = model.getProject();
-    this.circuit = model.getCircuit();
-    // A fresh state of the tested circuit, so any circuit can be tested, not only the one shown.
-    // The evaluator resets it before the first row anyway.
-    this.circuitState = CircuitState.createRootState(project, circuit, this);
-    this.vector = model.getVector();
-    this.evaluator = new TestVectorEvaluator(circuitState, vector);
-  }
 
   // used only for automated testing via command line arguments
   private TestThread(Project proj, Circuit circuit, TestVector vec) throws TestException {
@@ -95,24 +80,4 @@ public class TestThread extends UniquelyNamedThread {
     return passFail[1];
   }
 
-  public void cancel() {
-    canceled = true;
-    evaluator.setCanceled(true);
-  }
-
-  @Override
-  public void run() {
-    var allRowsRan = false;
-    try {
-      final var rows = new int[1];
-      evaluator.evaluate((row, report) -> {
-        canceled = canceled || !model.setResult(vector, row, report);
-        if (canceled) evaluator.setCanceled(true);
-        else rows[0]++;
-      });
-      allRowsRan = !canceled && rows[0] == vector.data.size();
-    } finally {
-      model.testerFinished(this, allRowsRan);
-    }
-  }
 }

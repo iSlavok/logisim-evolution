@@ -174,6 +174,11 @@ public class Ram extends Mem {
     return getHexFrame((ret == null) ? getNewContents(instance.getAttributeSet()) : ret.getContents(), proj, instance);
   }
 
+  /** Whether a reset of the simulation keeps this RAM's contents. */
+  public boolean keepsContentsOnReset(AttributeSet attrs) {
+    return !attrs.getValue(RamAttributes.ATTR_TYPE).equals(RamAttributes.VOLATILE);
+  }
+
   public boolean reset(CircuitState state, Instance instance) {
     final var ret = (RamState) instance.getData(state);
     if (ret == null) return true;

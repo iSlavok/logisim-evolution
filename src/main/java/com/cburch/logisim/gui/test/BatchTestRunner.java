@@ -12,7 +12,6 @@ package com.cburch.logisim.gui.test;
 import static com.cburch.logisim.gui.Strings.S;
 
 import com.cburch.logisim.circuit.Circuit;
-import com.cburch.logisim.circuit.CircuitState;
 import com.cburch.logisim.circuit.TestVectorEvaluator;
 import com.cburch.logisim.data.TestVector;
 import com.cburch.logisim.proj.Project;
@@ -59,9 +58,16 @@ public final class BatchTestRunner {
    * @return one of the exit codes
    */
   public static int run(Project project, File testDir, File junitFile, PrintStream out) throws IOException {
+    return run(project, testDir, junitFile, out, Runtime.getRuntime().availableProcessors());
+  }
+
+  /** Same as {@link #run(Project, File, File, PrintStream)}, on the given number of threads. */
+  public static int run(Project project, File testDir, File junitFile, PrintStream out, int threads)
+      throws IOException {
     final var file = project.getLogisimFile();
     final var bindings = TestBindings.load(file.getLoader().getMainFile());
-    final var results = new ArrayList<Result>();
+    final var engine = new TestEngine(threads);
+    final var runs = new ArrayList<Run>();
     final var tested = new HashSet<String>();
     final var start = System.nanoTime();
     for (final var circuit : file.getCircuits()) {
@@ -70,7 +76,11 @@ public final class BatchTestRunner {
           : existing(new File(testDir, circuit.getName() + TestBindings.VECTOR_SUFFIX));
       if (vector == null) continue;
       tested.add(vector.getName());
-      final var result = runOne(project, circuit, vector);
+      runs.add(Run.start(engine, project, circuit, vector));
+    }
+    final var results = new ArrayList<Result>();
+    for (final var run : runs) {
+      final var result = run.await();
       results.add(result);
       print(out, result);
     }
@@ -110,22 +120,64 @@ public final class BatchTestRunner {
     return file.isFile() ? file : null;
   }
 
-  /** Runs one circuit's vector, in a fresh state of the circuit, on this thread. */
-  public static Result runOne(Project project, Circuit circuit, File vectorFile) {
-    final var start = System.nanoTime();
-    final TestVector vector;
-    final TestVectorEvaluator evaluator;
-    try {
-      vector = new TestVector(vectorFile);
-      final var state = CircuitState.createRootState(project, circuit, Thread.currentThread());
-      evaluator = new TestVectorEvaluator(state, vector);
-    } catch (Exception e) {
-      return new Result(circuit.getName(), vectorFile, 0, 0, 0, System.nanoTime() - start,
-          e.getMessage() == null ? e.toString() : e.getMessage(), List.of());
+  /** Runs one circuit's vector on the given engine and waits for the result. */
+  public static Result runOne(TestEngine engine, Project project, Circuit circuit, File vectorFile) {
+    return Run.start(engine, project, circuit, vectorFile).await();
+  }
+
+  /** One circuit's run: collects its counts and first failures as the engine reports rows. */
+  private static final class Run implements TestEngine.RowSink {
+    private final String circuit;
+    private final File vectorFile;
+    private final TestVector vector;
+    private final ArrayList<String> failures = new ArrayList<>();
+    private TestEngine.Job job;
+    private String error;
+    private int passed;
+    private int failed;
+    private String simulationError;
+
+    private Run(String circuit, File vectorFile, TestVector vector) {
+      this.circuit = circuit;
+      this.vectorFile = vectorFile;
+      this.vector = vector;
     }
-    final var failures = new ArrayList<String>();
-    final var counts = evaluator.evaluate((row, report) -> {
-      if (report == null || report.isEmpty() || failures.size() >= MAX_FAILURES_SHOWN) return;
+
+    static Run start(TestEngine engine, Project project, Circuit circuit, File vectorFile) {
+      try {
+        final var vector = new TestVector(vectorFile);
+        final var run = new Run(circuit.getName(), vectorFile, vector);
+        run.job = engine.submit(project, circuit, vector, run);
+        return run;
+      } catch (Exception e) {
+        final var run = new Run(circuit.getName(), vectorFile, null);
+        run.error = e.getMessage() == null ? e.toString() : e.getMessage();
+        return run;
+      }
+    }
+
+    Result await() {
+      if (error != null) return new Result(circuit, vectorFile, 0, 0, 0, 0, error, List.of());
+      try {
+        job.await();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return new Result(circuit, vectorFile, 0, 0, 0, 0, e.toString(), List.of());
+      }
+      synchronized (this) {
+        return new Result(circuit, vectorFile, vector.data.size(), passed, failed, job.getNanos(),
+            simulationError, List.copyOf(failures));
+      }
+    }
+
+    @Override
+    public synchronized boolean rowDone(int row, ArrayList<TestVectorEvaluator.LineReport> report) {
+      if (report == null || report.isEmpty()) {
+        passed++;
+        return true;
+      }
+      failed++;
+      if (failures.size() >= MAX_FAILURES_SHOWN) return true;
       final var what = new StringBuilder();
       for (final var e : report) {
         if (what.length() > 0) what.append("; ");
@@ -137,9 +189,13 @@ public final class BatchTestRunner {
       }
       failures.add(S.get("batchTestFailure", Integer.toString(row + 1),
           Integer.toString(vector.lineNumbers[row]), what.toString()));
-    });
-    return new Result(circuit.getName(), vectorFile, vector.data.size(), counts[0], counts[1],
-        System.nanoTime() - start, null, failures);
+      return true;
+    }
+
+    @Override
+    public synchronized void finished(boolean allRowsRan, String error) {
+      simulationError = error;
+    }
   }
 
   private static void print(PrintStream out, Result result) {

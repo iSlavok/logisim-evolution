@@ -103,6 +103,7 @@ public class Startup implements AWTEventListener {
   private boolean testAll = false;
   private File testDir = null;
   private File junitFile = null;
+  private int testThreads = Runtime.getRuntime().availableProcessors();
   private String circuitToTest = null;
   private boolean exitAfterStartup = false;
   private boolean quitAfterParsing = false;
@@ -185,6 +186,7 @@ public class Startup implements AWTEventListener {
   private static final String ARG_TEST_ALL_LONG = "test-all";
   private static final String ARG_TEST_DIR_LONG = "test-dir";
   private static final String ARG_JUNIT_LONG = "junit";
+  private static final String ARG_TEST_THREADS_LONG = "test-threads";
   private static final String ARG_NO_SPLASH_LONG = "no-splash";
   private static final String ARG_MAIN_CIRCUIT = "toplevel-circuit";
 
@@ -349,6 +351,7 @@ public class Startup implements AWTEventListener {
     addOption(opts, "argTestAllOption", ARG_TEST_ALL_LONG, null, 0);
     addOption(opts, "argTestDirOption", ARG_TEST_DIR_LONG, null, 1);
     addOption(opts, "argJunitOption", ARG_JUNIT_LONG, null, 1);
+    addOption(opts, "argTestThreadsOption", ARG_TEST_THREADS_LONG, null, 1);
     addOption(opts, "argTestCircuitOption", ARG_TEST_CIRCUIT_LONG, ARG_TEST_CIRCUIT_SHORT, 1);     // FIXME add "Option" suffix to key name
     addOption(opts, "argTestCircGenOption", ARG_TEST_CIRC_GEN_LONG, ARG_TEST_CIRC_GEN_SHORT, 2);   // FIXME add "Option" suffix to key name
 
@@ -417,6 +420,7 @@ public class Startup implements AWTEventListener {
         case ARG_TEST_ALL_LONG -> handleArgTestAll(startup, opt);
         case ARG_TEST_DIR_LONG -> handleArgTestDir(startup, opt);
         case ARG_JUNIT_LONG -> handleArgJunit(startup, opt);
+        case ARG_TEST_THREADS_LONG -> handleArgTestThreads(startup, opt);
         case ARG_TEST_FGPA_LONG -> handleArgTestFpga(startup, opt);
         case ARG_FPGA_CABLE_LONG -> handleArgFpgaCable(startup, opt);
         case ARG_TEST_CIRCUIT_LONG -> handleArgTestCircuit(startup, opt);
@@ -722,6 +726,17 @@ public class Startup implements AWTEventListener {
   private static RC handleArgJunit(Startup startup, Option opt) {
     startup.junitFile = new File(opt.getValue());
     return RC.OK;
+  }
+
+  private static RC handleArgTestThreads(Startup startup, Option opt) {
+    try {
+      startup.testThreads = Integer.parseInt(opt.getValue());
+      if (startup.testThreads >= 1) return RC.OK;
+    } catch (NumberFormatException e) {
+      // reported below
+    }
+    logger.error(S.get("argTestThreadsError", opt.getValue()));
+    return RC.ERROR;
   }
 
   private static RC handleArgMainCircuit(Startup startup, Option opt) {
@@ -1135,7 +1150,7 @@ public class Startup implements AWTEventListener {
           if (testAll) {
             proj = ProjectActions.doOpenNoWindow(monitor, fileToOpen);
             try {
-              System.exit(BatchTestRunner.run(proj, testDir, junitFile, System.out));
+              System.exit(BatchTestRunner.run(proj, testDir, junitFile, System.out, testThreads));
             } catch (IOException e) {
               logger.error("{}", e.getMessage());
               System.exit(BatchTestRunner.EXIT_ERROR);
