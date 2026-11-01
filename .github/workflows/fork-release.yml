@@ -77,6 +77,15 @@ jobs:
       - name: "Build sources JAR"
         if: matrix.arch == 'x64'
         run: ./gradlew sourcesJar
+      - name: "Keep the JARs of the x64 build only"
+        # createDeb builds a JAR on arm64 too; publishing both under one name corrupts the file.
+        if: matrix.arch != 'x64'
+        run: rm -f build/libs/*.jar
+      - name: "Check that the JAR starts"
+        if: matrix.arch == 'x64'
+        run: |
+          python3 .github/check-jar.py build/libs/*-all.jar
+          java -jar build/libs/*-all.jar --version
       - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
@@ -164,8 +173,22 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
-          path: dist
-          merge-multiple: true
+          path: artifacts
+      - uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JDK_VERSION }}
+          distribution: ${{ env.JDK_DISTRO }}
+      - name: "Collect and check release files"
+        run: |
+          set -euo pipefail
+          # Each artifact is in its own folder; two files with one name would overwrite each other.
+          dupes=$(find artifacts -type f -printf '%f\n' | sort | uniq -d)
+          if [[ -n "$dupes" ]]; then echo "Files built twice: $dupes"; exit 1; fi
+          mkdir dist
+          find artifacts -type f -exec cp {} dist/ \;
+          python3 .github/check-jar.py dist/*.jar
+          unzip -tq dist/*-all.jar
+          java -jar dist/*-all.jar --version
       - name: "Create draft release"
         env:
           GH_TOKEN: ${{ github.token }}
