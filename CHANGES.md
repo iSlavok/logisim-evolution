@@ -2,6 +2,23 @@
 
 # Changes #
 
+* v5.1.0-fork3 (2026-11-01), unofficial build by @iSlavok
+  * Added the faster simulation reset from [#3157] (also listed under `@dev` below).
+  * Added the simulator speed-up from the open upstream pull request [#3071] by @Kejoki: a queued
+    component runs once per step, and components cache which of their ports are connected.
+  * Added Simulate > All Tests: lists every circuit with a test vector, its status (passed, failed,
+    outdated, not run), counts and run time, and runs all, the selected, or the failed and outdated
+    ones. A circuit's vector is `tests/<circuit>.txt` next to the project file, or a file chosen by
+    hand and kept in `<project>.circ.tests`; the `.circ` file is not changed. Results become outdated
+    when the circuit, a circuit it uses, the simulation options or the vector file change.
+  * Tests run in parallel: several circuits at once, and the rows of one vector split between threads
+    at the points where the circuit is reset anyway. Only circuits whose components are known to keep
+    nothing across a reset are split; others run alone, row after row, as before.
+  * The test vector window shows failed cells as expected → computed, the details of the selected row,
+    "Only failures" and "Next failure"; its Stop button now stops the run.
+  * Added `--test-all` (with `--test-dir`, `--junit` and `--test-threads`) to run every circuit's test
+    vector from the command line in one go.
+  * Native macOS dialogs, such as the file chooser, now follow the dark or light theme.
 * v5.1.0-fork2 (2026-11-01), unofficial build by @iSlavok
   * Added the dark theme fix from [#3155] (also listed under `@dev` below).
 * v5.1.0-fork1 (2026-11-01), unofficial build by @iSlavok
@@ -11,6 +28,8 @@
   * Set the version to `5.1.0-fork1`, added this notice and the README notice, and added a release
     workflow that builds the packages for this fork.
 * @dev (????-??-??)
+  * Made resetting the simulation of designs with many subcircuit instances faster and lighter on memory
+    [#3156] (@iSlavok).
   * Fixed elements drawn in black with dark themes: the subcircuit clock symbol, Classic and HolyCross
     subcircuit outlines and icons, the Test Vector table, the timing diagram ruler and signal list, and
     the zoom and compile icons [#3154] (@iSlavok).
