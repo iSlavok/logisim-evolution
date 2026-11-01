@@ -2,6 +2,8 @@
 
 # Changes #
 
+* v5.1.0-fork2 (2026-11-01), unofficial build by @iSlavok
+  * Added the dark theme fix from [#3155] (also listed under `@dev` below).
 * v5.1.0-fork1 (2026-11-01), unofficial build by @iSlavok
   * Based on upstream `main` at 46295a9e2 (Logisim-evolution 5.1.0-dev), which includes every change
     listed under `@dev` below.
@@ -9,6 +11,9 @@
   * Set the version to `5.1.0-fork1`, added this notice and the README notice, and added a release
     workflow that builds the packages for this fork.
 * @dev (????-??-??)
+  * Fixed elements drawn in black with dark themes: the subcircuit clock symbol, Classic and HolyCross
+    subcircuit outlines and icons, the Test Vector table, the timing diagram ruler and signal list, and
+    the zoom and compile icons [#3154] (@iSlavok).
   * Fixed the simulation tree duplicating and leaking nodes, which made editing designs with nested
     subcircuits slower and slower [#3152] (@iSlavok).
   * Added facing and a selectable grid height to the LED Bar [#3085] (@Vadimatorik).
