@@ -24,7 +24,9 @@ import com.cburch.logisim.gui.main.Frame;
 import com.cburch.logisim.gui.main.Selection;
 import com.cburch.logisim.gui.main.SelectionActions;
 import com.cburch.logisim.gui.opts.OptionsFrame;
+import com.cburch.logisim.gui.test.TestExplorerFrame;
 import com.cburch.logisim.gui.test.TestFrame;
+import com.cburch.logisim.gui.test.TestSuite;
 import com.cburch.logisim.gui.test.TestThread;
 import com.cburch.logisim.tools.AddTool;
 import com.cburch.logisim.tools.Library;
@@ -144,6 +146,8 @@ public class Project {
   private OptionsFrame optionsFrame = null;
   private LogFrame logFrame = null;
   private TestFrame testFrame = null;
+  private TestExplorerFrame testExplorerFrame = null;
+  private TestSuite testSuite = null;
   private Tool tool = null;
   private final LinkedList<ActionData> undoLog = new LinkedList<>();
   private int undoMods = 0;
@@ -408,6 +412,17 @@ public class Project {
   public TestFrame getTestFrame() {
     if (testFrame == null) testFrame = new TestFrame(this);
     return testFrame;
+  }
+
+  public TestExplorerFrame getTestExplorerFrame() {
+    if (testExplorerFrame == null) testExplorerFrame = new TestExplorerFrame(this);
+    return testExplorerFrame;
+  }
+
+  /** The tests of every circuit of this project. */
+  public TestSuite getTestSuite() {
+    if (testSuite == null) testSuite = new TestSuite(this);
+    return testSuite;
   }
 
   public Tool getTool() {

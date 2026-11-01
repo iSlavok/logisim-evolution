@@ -27,21 +27,29 @@ import com.cburch.logisim.std.wiring.Pin;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Font;
 import java.awt.Toolkit;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Set;
 import java.util.HashSet;
-import javax.swing.JPanel;
+import javax.swing.BorderFactory;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Listener {
 
   static final Color failColor = new Color(0xff9999);
+  /** Between the expected and the computed value of a failed cell. */
+  static final String FAIL_ARROW = "→";
   static final Color activeButtonColor = new Color(0x99ff99); // Light green
   static final Color inactiveButtonColor = new Color(0xE0E0FF); // Light blue
   private static final long serialVersionUID = 1L;
@@ -49,6 +57,13 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
 
   private final TestFrame testFrame;
   private final ValueTable table;
+  private final JTextArea details = new JTextArea(4, 40);
+  /** Pin columns that failed in some row; they are widened to show expected and computed values. */
+  private final Set<Integer> failedColumns = new HashSet<>();
+  private int failuresScanned = 0;
+  private boolean failuresOnly = false;
+  /** Selected row of the vector file, or -1. */
+  private int selectedRow = -1;
   private final MyListener myListener = new MyListener();
   ComponentAdapter componentAdapter = null;
   private boolean simulatorListening = false;
@@ -68,6 +83,12 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
     table = new ValueTable(getModel() == null ? null : this);
     setLayout(new BorderLayout());
     add(table);
+    details.setEditable(false);
+    details.setLineWrap(true);
+    details.setWrapStyleWord(true);
+    details.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+    details.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+    add(new JScrollPane(details), BorderLayout.SOUTH);
     modelChanged(null, getModel());
     setComponentAdapter();
   }
@@ -76,7 +97,17 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
   public String specialColumnEntry(int i) {
     if (i < specialHeaders.length) return null; // special columns are handled separately.
     TestVector vec = getModel().getVector();
-    return vec.specialColumnEntry(i - specialHeaders.length);
+    final var col = i - specialHeaders.length;
+    final var special = vec.specialColumnEntry(col);
+    if (!failedColumns.contains(col)) return special;
+    // room for "expected → computed"
+    final var width = vec.columnWidth[col];
+    final var radix = getColumnValueRadix(i);
+    final var widest = Value.createKnown(width,
+        radix == 2 ? 0 : (radix == 10 ? (1L << (width.getWidth() - 1)) : width.getMask()));
+    final var label = widest.toDisplayString(radix);
+    final var both = label + FAIL_ARROW + label;
+    return special == null || special.length() < both.length() ? both : special;
   }
 
   @Override
@@ -129,8 +160,150 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
 
   @Override
   public int getRowCount() {
-    TestVector vec = getModel().getVector();
-    return vec == null ? 0 : vec.data.size();
+    final var model = getModel();
+    TestVector vec = model == null ? null : model.getVector();
+    if (vec == null) return 0;
+    return failuresOnly ? model.getFailedSortedIndices().size() : vec.data.size();
+  }
+
+  /** The row of the vector file shown at the given row of the table. */
+  private int fileRow(int displayRow) {
+    final var model = getModel();
+    if (failuresOnly) {
+      final var failed = model.getFailedSortedIndices();
+      return displayRow < failed.size() ? failed.get(displayRow) : -1;
+    }
+    return model.sortedIndex(displayRow);
+  }
+
+  /** The row of the table showing the given row of the vector file, or -1. */
+  private int displayRow(int fileRow) {
+    for (var i = 0; i < getRowCount(); i++) {
+      if (fileRow(i) == fileRow) return i;
+    }
+    return -1;
+  }
+
+  /** Shows only the rows that failed. */
+  public void setFailuresOnly(boolean value) {
+    if (failuresOnly == value) return;
+    failuresOnly = value;
+    table.modelChanged();
+    // after the table took its new size, so it does not stay scrolled to the end
+    SwingUtilities.invokeLater(() -> table.scrollToRow(Math.max(0, displayRow(selectedRow))));
+  }
+
+  /** Selects the next failed row after the selected one, wrapping around. Returns false if none. */
+  public boolean selectNextFailure() {
+    final var model = getModel();
+    if (model == null || model.getVector() == null) return false;
+    final var failed = model.getFailedSortedIndices();
+    if (failed.isEmpty()) return false;
+    final var current = displayRow(selectedRow);
+    for (var i = 1; i <= getRowCount(); i++) {
+      final var display = (Math.max(current, -1) + i) % getRowCount();
+      final var row = fileRow(display);
+      if (row >= 0 && model.getResults()[row] != null) {
+        select(row);
+        table.scrollToRow(display);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  @Override
+  public boolean rowClicked(int displayRow) {
+    final var row = fileRow(displayRow);
+    if (row < 0) return false;
+    select(row);
+    return true;
+  }
+
+  private void select(int row) {
+    selectedRow = row;
+    updateDetails();
+    table.dataChanged();
+  }
+
+  /** Describes the selected row: where it is in the file, its values, and what failed. */
+  private void updateDetails() {
+    final var model = getModel();
+    final var vec = model == null ? null : model.getVector();
+    if (vec == null || selectedRow < 0 || selectedRow >= vec.data.size()) {
+      details.setText(S.get("testDetailsNoSelection"));
+      return;
+    }
+    final var text = new StringBuilder();
+    final var file = model.getVectorFile();
+    text.append(S.get("testDetailsRow", Integer.toString(selectedRow + 1),
+        Integer.toString(vec.lineNumbers[selectedRow]), file == null ? "?" : file.getName()));
+    text.append(" · ");
+    text.append(vec.seqNumbers[selectedRow] == 0
+        ? S.get("testDetailsCombinational")
+        : S.get("testDetailsSetSeq", Integer.toString(vec.setNumbers[selectedRow]),
+            Integer.toString(vec.seqNumbers[selectedRow])));
+    text.append('\n');
+    final var results = model.getResults();
+    final var done = selectedRow < model.getPass() + model.getFail();
+    final var report = results == null ? null : results[selectedRow];
+    if (report != null) {
+      for (final var e : report) {
+        final var radix = getColumnValueRadix(specialHeaders.length + e.column());
+        text.append("✗ ");
+        text.append(e.oscillating()
+            ? S.get("testDetailsOscillating", e.columnName())
+            : S.get("testDetailsFailedOutput", e.columnName(),
+                expectedText(vec, selectedRow, e.column(), e.expected(), radix),
+                e.computed().toDisplayString(radix)));
+        text.append('\n');
+      }
+    } else {
+      text.append(done ? S.get("testDetailsPassed") : S.get("testDetailsNotRun")).append('\n');
+    }
+    final var values = new StringBuilder();
+    final var data = vec.data.get(selectedRow);
+    for (var col = 0; col < vec.columnName.length; col++) {
+      if (col > 0) values.append(", ");
+      final var radix = getColumnValueRadix(specialHeaders.length + col);
+      values.append(vec.columnName[col]).append(" = ")
+          .append(expectedText(vec, selectedRow, col, data[col], radix));
+    }
+    text.append(S.get("testDetailsValues", values.toString()));
+    details.setText(text.toString());
+    details.setCaretPosition(0);
+  }
+
+  private static String expectedText(TestVector vec, int row, int col, Value value, int radix) {
+    if (vec.isDontCare(row, col)) return "<DC>";
+    if (vec.isFloating(row, col)) return "<float>";
+    return value.toDisplayString(radix);
+  }
+
+  /** Notes the pin columns of new failures, widening the table when a column fails first. */
+  private void scanFailures() {
+    final var model = getModel();
+    final var results = model == null ? null : model.getResults();
+    final var failed = model == null ? null : model.getFailedRows();
+    if (results == null || failed == null) {
+      if (!failedColumns.isEmpty()) {
+        failedColumns.clear();
+        table.modelChanged();
+      }
+      failuresScanned = 0;
+      return;
+    }
+    if (failed.size() < failuresScanned) {
+      failuresScanned = 0;
+      failedColumns.clear();
+    }
+    var widened = false;
+    for (; failuresScanned < failed.size(); failuresScanned++) {
+      final var report = results[failed.get(failuresScanned)];
+      if (report == null) continue;
+      for (final var e : report) widened |= failedColumns.add(e.column());
+    }
+    if (widened) table.modelChanged();
   }
 
   @Override
@@ -149,8 +322,15 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
     final int pinColumnStart = specialHeaders.length;
 
     for (var outRow = 0; outRow < numRows; outRow++) {
-      final var row = model.sortedIndex(outRow + firstRow);
+      final var row = fileRow(outRow + firstRow);
+      if (row < 0) {
+        Arrays.fill(rowData[outRow], null);
+        continue;
+      }
       final var data = vec.data.get(row);
+      final var selected = row == selectedRow;
+      final var rowBg = selected ? UIManager.getColor("Table.selectionBackground") : null;
+      final var rowFg = selected ? UIManager.getColor("Table.selectionForeground") : null;
       String rowmsg = null;
       String status = null;
       var failed = false;
@@ -160,7 +340,9 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
           failed = true;
           for (final var e : err) {
             var col = e.column();
-            msg[col] = S.get("expectedValueMessage", e.expected().toDisplayString(getColumnValueRadix(pinColumnStart + col)));
+            final var radix = getColumnValueRadix(pinColumnStart + col);
+            msg[col] = S.get("testFailureCellTip",
+                expectedText(vec, row, col, e.expected(), radix), e.computed().toDisplayString(radix));
             altdata[col] = e.computed();
           }
         }
@@ -176,24 +358,25 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
       rowData[outRow][1] = new ValueTable.Cell("Set", setButtonBg, null, S.get("toolTipSet"));
 
       // Status column (column 2)
-      rowData[outRow][2] = new ValueTable.Cell(status, rowmsg != null ? failColor : null, null, rowmsg);
+      rowData[outRow][2] = new ValueTable.Cell(status, failed ? failColor : rowBg, failed ? null : rowFg, rowmsg);
 
       // <set> column (column 3)
       int setValue = vec.setNumbers[row];
-      rowData[outRow][3] = new ValueTable.Cell(Integer.toString(setValue), null, null, "Set: " + setValue);
+      rowData[outRow][3] = new ValueTable.Cell(Integer.toString(setValue), rowBg, rowFg, "Set: " + setValue);
 
       // <seq> column (column 4)
       int seqValue = vec.seqNumbers[row];
       String seqText = seqValue == 0 ? "comb" : Integer.toString(seqValue);
       String seqTooltip = seqValue == 0 ? S.get("toolTipCombinational") : S.get("toolTipSequential", "" + seqValue);
-      rowData[outRow][4] = new ValueTable.Cell(seqText, null, null, seqTooltip);
+      rowData[outRow][4] = new ValueTable.Cell(seqText, rowBg, rowFg, seqTooltip);
 
       // Pin columns
       for (var col = 0; col < columns; col++) {
         int colIndex = col + specialHeaders.length;
         String tooltip = msg[col];
         String displayText;
-        Color bgColor = msg[col] != null ? failColor : null;
+        Color bgColor = msg[col] != null ? failColor : rowBg;
+        Color fgColor = msg[col] != null ? null : rowFg;
 
         // Check for special values first
         if (vec.isDontCare(row, col)) {
@@ -201,18 +384,20 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
           tooltip = (tooltip != null ? tooltip + " | " : "") + S.get("toolTipDontCare", displayText);
         } else if (vec.isFloating(row, col)) {
           if (altdata[col] != null) {
-            displayText = altdata[col].toDisplayString(getColumnValueRadix(pinColumnStart + col));
+            displayText = "<float>" + FAIL_ARROW
+                + altdata[col].toDisplayString(getColumnValueRadix(pinColumnStart + col));
           } else {
             displayText = "<float>";
             tooltip = (tooltip != null ? tooltip + " | " : "") + S.get("toolTipFloating", displayText);
           }
         } else {
-          // Regular value - show computed value if there's an error, otherwise show expected
-          Value displayValue = altdata[col] != null ? altdata[col] : data[col];
-          displayText = displayValue.toDisplayString(getColumnValueRadix(pinColumnStart + col));
+          // Regular value: the expected one, followed by the computed one when they differ
+          final var radix = getColumnValueRadix(pinColumnStart + col);
+          displayText = data[col].toDisplayString(radix);
+          if (altdata[col] != null) displayText += FAIL_ARROW + altdata[col].toDisplayString(radix);
         }
 
-        rowData[outRow][colIndex] = new ValueTable.Cell(displayText, bgColor, null, tooltip);
+        rowData[outRow][colIndex] = new ValueTable.Cell(displayText, bgColor, fgColor, tooltip);
         msg[col] = null;
         altdata[col] = null;
       }
@@ -221,6 +406,7 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
 
   public void localeChanged() {
     table.modelChanged();
+    updateDetails();
   }
 
   public void modelChanged(Model oldModel, Model newModel) {
@@ -242,7 +428,12 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
     }
     // Reset active rows when model changes
     resetActiveRows();
+    selectedRow = -1;
+    failuresScanned = 0;
+    failedColumns.clear();
     table.setModel(newModel == null ? null : this);
+    scanFailures();
+    updateDetails();
   }
 
   private void setComponentAdapter() {
@@ -294,7 +485,8 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
     if (vec == null) return;
 
     // Convert display row to file row index
-    int fileRow = model.sortedIndex(displayRow);
+    int fileRow = fileRow(displayRow);
+    if (fileRow < 0) return;
 
     // Get sequence number for this row
     int seqValue = (vec.seqNumbers != null && fileRow < vec.seqNumbers.length)
@@ -472,13 +664,20 @@ public class TestPanel extends JPanel implements ValueTable.Model, Simulator.Lis
 
     @Override
     public void testResultsChanged(int numPass, int numFail) {
-      table.dataChanged();
+      scanFailures();
+      if (failuresOnly) table.modelChanged();
+      else table.dataChanged();
+      if (selectedRow >= 0) updateDetails();
     }
 
     @Override
     public void vectorChanged() {
       resetActiveRows();
+      selectedRow = -1;
+      failuresScanned = 0;
+      failedColumns.clear();
       table.modelChanged();
+      updateDetails();
     }
   }
 }

@@ -28,6 +28,7 @@ import com.cburch.logisim.gui.main.Print;
 import com.cburch.logisim.gui.menu.LogisimMenuBar;
 import com.cburch.logisim.gui.menu.WindowManagers;
 import com.cburch.logisim.gui.search.DoubleShiftTrigger;
+import com.cburch.logisim.gui.test.BatchTestRunner;
 import com.cburch.logisim.gui.test.TestBench;
 import com.cburch.logisim.prefs.AppPreferences;
 import com.cburch.logisim.proj.Project;
@@ -45,6 +46,7 @@ import java.awt.event.AWTEventListener;
 import java.awt.event.ContainerEvent;
 import java.io.File;
 import java.io.FilenameFilter;
+import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -98,6 +100,9 @@ public class Startup implements AWTEventListener {
   private boolean templEmpty = false;
   private boolean templPlain = false;
   private String testVector = null;
+  private boolean testAll = false;
+  private File testDir = null;
+  private File junitFile = null;
   private String circuitToTest = null;
   private boolean exitAfterStartup = false;
   private boolean quitAfterParsing = false;
@@ -177,6 +182,9 @@ public class Startup implements AWTEventListener {
   private static final String ARG_VERSION_LONG = "version";
   private static final String ARG_TEST_VECTOR_SHORT = "w";
   private static final String ARG_TEST_VECTOR_LONG = "test-vector";
+  private static final String ARG_TEST_ALL_LONG = "test-all";
+  private static final String ARG_TEST_DIR_LONG = "test-dir";
+  private static final String ARG_JUNIT_LONG = "junit";
   private static final String ARG_NO_SPLASH_LONG = "no-splash";
   private static final String ARG_MAIN_CIRCUIT = "toplevel-circuit";
 
@@ -338,6 +346,9 @@ public class Startup implements AWTEventListener {
     addOption(opts, "argNoSplashOption", ARG_NO_SPLASH_LONG);
     addOption(opts, "argMainCircuitOption", ARG_MAIN_CIRCUIT, 1);
     addOption(opts, "argTestVectorOption", ARG_TEST_VECTOR_LONG, ARG_TEST_VECTOR_SHORT, 2);
+    addOption(opts, "argTestAllOption", ARG_TEST_ALL_LONG, null, 0);
+    addOption(opts, "argTestDirOption", ARG_TEST_DIR_LONG, null, 1);
+    addOption(opts, "argJunitOption", ARG_JUNIT_LONG, null, 1);
     addOption(opts, "argTestCircuitOption", ARG_TEST_CIRCUIT_LONG, ARG_TEST_CIRCUIT_SHORT, 1);     // FIXME add "Option" suffix to key name
     addOption(opts, "argTestCircGenOption", ARG_TEST_CIRC_GEN_LONG, ARG_TEST_CIRC_GEN_SHORT, 2);   // FIXME add "Option" suffix to key name
 
@@ -403,6 +414,9 @@ public class Startup implements AWTEventListener {
         case ARG_TEMPLATE_LONG -> handleArgTemplate(startup, opt);
         case ARG_NO_SPLASH_LONG -> handleArgNoSplash(startup, opt);
         case ARG_TEST_VECTOR_LONG -> handleArgTestVector(startup, opt);
+        case ARG_TEST_ALL_LONG -> handleArgTestAll(startup, opt);
+        case ARG_TEST_DIR_LONG -> handleArgTestDir(startup, opt);
+        case ARG_JUNIT_LONG -> handleArgJunit(startup, opt);
         case ARG_TEST_FGPA_LONG -> handleArgTestFpga(startup, opt);
         case ARG_FPGA_CABLE_LONG -> handleArgFpgaCable(startup, opt);
         case ARG_TEST_CIRCUIT_LONG -> handleArgTestCircuit(startup, opt);
@@ -686,6 +700,27 @@ public class Startup implements AWTEventListener {
     startup.showSplash = false;
     startup.exitAfterStartup = true;
     // This is to test a test bench. It will return 0 or 1 depending on if the tests pass or not.
+    return RC.OK;
+  }
+
+  private static RC handleArgTestAll(Startup startup, Option opt) {
+    startup.testAll = true;
+    startup.showSplash = false;
+    startup.exitAfterStartup = true;
+    return RC.OK;
+  }
+
+  private static RC handleArgTestDir(Startup startup, Option opt) {
+    startup.testDir = new File(opt.getValue());
+    if (!startup.testDir.isDirectory()) {
+      logger.error(S.get("argTestDirError", opt.getValue()));
+      return RC.ERROR;
+    }
+    return RC.OK;
+  }
+
+  private static RC handleArgJunit(Startup startup, Option opt) {
+    startup.junitFile = new File(opt.getValue());
     return RC.OK;
   }
 
@@ -1011,7 +1046,7 @@ public class Startup implements AWTEventListener {
     initialized = true;
 
     // Check for unnamed autosaves here and allow to save them and/or open them again
-    if (testVector == null && testCircPathInput == null) {
+    if (testVector == null && !testAll && testCircPathInput == null) {
       // get list of all unnamed autosave files
       final var autosaves = new File(System.getProperty("user.home")).listFiles(
             new FilenameFilter() {
@@ -1097,7 +1132,15 @@ public class Startup implements AWTEventListener {
       var first = true;
       for (final var fileToOpen : filesToOpen) {
         try {
-          if (testVector != null) {
+          if (testAll) {
+            proj = ProjectActions.doOpenNoWindow(monitor, fileToOpen);
+            try {
+              System.exit(BatchTestRunner.run(proj, testDir, junitFile, System.out));
+            } catch (IOException e) {
+              logger.error("{}", e.getMessage());
+              System.exit(BatchTestRunner.EXIT_ERROR);
+            }
+          } else if (testVector != null) {
             proj = ProjectActions.doOpenNoWindow(monitor, fileToOpen);
             proj.doTestVector(testVector, circuitToTest);
           } else if (testCircPathInput != null && testCircPathOutput != null) {

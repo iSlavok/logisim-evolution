@@ -56,6 +56,7 @@ public class MenuSimulate extends Menu {
   private final ArrayList<CircuitStateMenuItem> upStateItems = new ArrayList<>();
   private final JMenuItem log = new JMenuItem();
   private final JMenuItem test = new JMenuItem();
+  private final JMenuItem testExplorer = new JMenuItem();
   private final JMenuItem assemblyWindow = new JMenuItem();
   AssemblyWindow assWin = null;
   private CircuitState currentState = null;
@@ -122,6 +123,7 @@ public class MenuSimulate extends Menu {
     addSeparator();
     add(log);
     add(test);
+    add(testExplorer);
     addSeparator();
     add(assemblyWindow);
 
@@ -154,6 +156,7 @@ public class MenuSimulate extends Menu {
     // ticksEnabled.addActionListener(myListener);
     log.addActionListener(myListener);
     test.addActionListener(myListener);
+    testExplorer.addActionListener(myListener);
     assemblyWindow.addActionListener(myListener);
 
     computeEnabled();
@@ -237,6 +240,7 @@ public class MenuSimulate extends Menu {
     upStateMenu.setText(S.get("simulateUpStateMenu"));
     log.setText(S.get("simulateLogItem"));
     test.setText(S.get("simulateTestItem"));
+    testExplorer.setText(S.get("simulateTestExplorerItem"));
     assemblyWindow.setText(S.get("simulateAssemblyViewer"));
     if (assWin != null) {
       assWin.localeChanged();
@@ -376,6 +380,8 @@ public class MenuSimulate extends Menu {
         proj.getLogFrame().setVisible(true);
       } else if (src == test) {
         proj.getTestFrame().setVisible(true);
+      } else if (src == testExplorer) {
+        proj.getTestExplorerFrame().setVisible(true);
       }
 
       final var sim = proj.getSimulator();

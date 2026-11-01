@@ -27,8 +27,7 @@ public class TestThread extends UniquelyNamedThread {
   private final TestVector vector;
   private final TestVectorEvaluator evaluator;
   private Model model;
-  private boolean canceled = false;
-  private boolean paused = false;
+  private volatile boolean canceled = false;
 
   public TestThread(Model model) throws TestException {
     super("TestThread-Model");
@@ -36,7 +35,9 @@ public class TestThread extends UniquelyNamedThread {
 
     this.project = model.getProject();
     this.circuit = model.getCircuit();
-    this.circuitState = this.project.getCircuitState().cloneAsNewRootState(this);
+    // A fresh state of the tested circuit, so any circuit can be tested, not only the one shown.
+    // The evaluator resets it before the first row anyway.
+    this.circuitState = CircuitState.createRootState(project, circuit, this);
     this.vector = model.getVector();
     this.evaluator = new TestVectorEvaluator(circuitState, vector);
   }
@@ -96,25 +97,22 @@ public class TestThread extends UniquelyNamedThread {
 
   public void cancel() {
     canceled = true;
+    evaluator.setCanceled(true);
   }
 
   @Override
   public void run() {
+    var allRowsRan = false;
     try {
-      executeSequentialTests();
+      final var rows = new int[1];
+      evaluator.evaluate((row, report) -> {
+        canceled = canceled || !model.setResult(vector, row, report);
+        if (canceled) evaluator.setCanceled(true);
+        else rows[0]++;
+      });
+      allRowsRan = !canceled && rows[0] == vector.data.size();
     } finally {
-      model.stop();
+      model.testerFinished(this, allRowsRan);
     }
-  }
-
-  private void executeSequentialTests() {
-    evaluator.evaluate((row, report) -> {
-      canceled = canceled || !model.setResult(vector, row, report);
-      if (canceled) evaluator.setCanceled(canceled);
-    });
-  }
-
-  public void setPaused(boolean paused) {
-    this.paused = paused;
   }
 }

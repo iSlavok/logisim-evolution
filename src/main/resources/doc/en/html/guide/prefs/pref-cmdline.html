@@ -135,6 +135,23 @@
           </p>
         </dd>
 
+        <dt><tt>--test-all <i>PROJECT_FILE</i></tt></dt>
+        <dd>
+          <p>
+            Runs the test vector of every circuit of <i>PROJECT_FILE</i> in one go, prints a line per
+            circuit and a summary, then exits. A circuit's vector is <tt>tests/<i>CIRCUIT</i>.txt</tt>
+            next to the project file, or the file chosen for it in the <i>All Tests</i> window, which
+            keeps such choices in <tt><i>PROJECT_FILE</i>.tests</tt>. The exit code is 0 when every
+            row passed, 1 when a row failed, and 2 when a vector could not be used or none was found.
+          </p>
+        </dd>
+
+        <dt><tt>--test-dir <i>FOLDER</i></tt></dt>
+        <dd><p>With <tt>--test-all</tt>, takes the vectors from <i>FOLDER</i>, as <tt><i>CIRCUIT</i>.txt</tt>.</p></dd>
+
+        <dt><tt>--junit <i>FILE</i></tt></dt>
+        <dd><p>With <tt>--test-all</tt>, also writes the results to <i>FILE</i> as JUnit XML.</p></dd>
+
         <dt><tt>-b, --test-circuit <i>CIRC_FILE</i></tt></dt>
         <dd><p>Opens a project, runs its test bench, reports success or failure, and exits.</p></dd>
 

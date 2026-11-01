@@ -19,6 +19,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics;
+import java.awt.Rectangle;
 import java.awt.event.MouseEvent;
 import javax.swing.JPanel;
 import javax.swing.JScrollBar;
@@ -49,6 +50,8 @@ public class ValueTable extends JPanel {
   private int cellHeight;
   private int tableWidth;
   private int tableHeight;
+  /** Whether the column widths were measured with the real fonts, which needs a displayed table. */
+  private boolean measured;
   private Model model;
 
   public ValueTable(Model model) {
@@ -92,6 +95,7 @@ public class ValueTable extends JPanel {
       final var g = getGraphics();
       var cellsWidth = 0;
 
+      measured = g != null;
       if (g == null) {
         cellHeight = 16;
         // Initialize column widths with default values
@@ -237,6 +241,12 @@ public class ValueTable extends JPanel {
     model.getRowData(rowStart, rowCount, rowData);
   }
 
+  /** Scrolls so that the given row is visible. */
+  public void scrollToRow(int row) {
+    if (cellHeight <= 0) return;
+    body.scrollRectToVisible(new Rectangle(0, row * cellHeight, 1, cellHeight));
+  }
+
   public void setModel(Model model) {
     this.model = model;
     modelChanged();
@@ -265,6 +275,11 @@ public class ValueTable extends JPanel {
     }
 
     String specialColumnEntry(int i);
+
+    /** Called when a row is clicked outside the button columns; true when the click was used. */
+    default boolean rowClicked(int row) {
+      return false;
+    }
 
     // Called when a button in the button column is clicked
     // row is the display row index (after sorting)
@@ -341,7 +356,12 @@ public class ValueTable extends JPanel {
             return;
           }
 
-          // Otherwise, handle radix change for other columns
+          // Otherwise select the row, or change the column's radix when rows can't be selected
+          final var row = y / cellHeight;
+          if (row < model.getRowCount() && model.rowClicked(row)) {
+            repaint();
+            return;
+          }
           if (col >= 0) model.changeColumnValueRadix(col);
         }
       });
@@ -367,6 +387,7 @@ public class ValueTable extends JPanel {
     @Override
     public void paintComponent(Graphics g) {
       super.paintComponent(g);
+      if (!measured && model != null) computePreferredSize();
 
       final var sz = getSize();
       final var fg = getForeground();

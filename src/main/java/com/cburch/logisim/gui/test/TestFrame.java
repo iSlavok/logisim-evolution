@@ -11,7 +11,6 @@ package com.cburch.logisim.gui.test;
 
 import static com.cburch.logisim.gui.Strings.S;
 
-import com.cburch.logisim.circuit.Circuit;
 import com.cburch.logisim.data.TestException;
 import com.cburch.logisim.data.TestVector;
 import com.cburch.logisim.gui.generic.LFrame;
@@ -24,24 +23,29 @@ import com.cburch.logisim.util.LocaleListener;
 import com.cburch.logisim.util.LocaleManager;
 import com.cburch.logisim.util.WindowMenuItemManager;
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Locale;
+import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JTextArea;
 
 public class TestFrame extends LFrame.SubWindowWithSimulation {
 
   private static final long serialVersionUID = 1L;
-  private final Map<Circuit, Model> modelMap = new HashMap<>();
+  static final Color WARNING_COLOR = new Color(0xd08000);
   private final MyListener myListener = new MyListener();
   private final WindowMenuManager windowManager;
   private final JFileChooser chooser = JFileChoosers.create();
@@ -50,13 +54,15 @@ public class TestFrame extends LFrame.SubWindowWithSimulation {
   private final JButton run = new JButton();
   private final JButton stop = new JButton();
   private final JButton reset = new JButton();
+  private final JButton nextFailure = new JButton();
+  private final JButton explorer = new JButton();
   private final JButton close = new JButton();
+  private final JCheckBox failuresOnly = new JCheckBox();
   private final JLabel pass = new JLabel();
   private final JLabel fail = new JLabel();
+  private final JLabel fileLabel = new JLabel();
+  private final JTextArea notice = new JTextArea();
   private Model curModel;
-  private int finished;
-  private int count;
-  private File curFile;
 
   public TestFrame(Project project) {
     super(project);
@@ -70,28 +76,43 @@ public class TestFrame extends LFrame.SubWindowWithSimulation {
 
     panel = new TestPanel(this);
 
-    JPanel statusPanel = new JPanel();
-    statusPanel.add(pass);
-    statusPanel.add(fail);
+    final var counts = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 0));
+    counts.add(pass);
+    counts.add(fail);
+    counts.add(fileLabel);
+    notice.setEditable(false);
+    notice.setFocusable(false);
+    notice.setOpaque(false);
+    notice.setLineWrap(true);
+    notice.setWrapStyleWord(true);
+    notice.setForeground(WARNING_COLOR);
+    notice.setFont(pass.getFont().deriveFont(Font.BOLD));
+    notice.setBorder(BorderFactory.createEmptyBorder(2, 8, 4, 8));
+    final var statusPanel = new JPanel(new BorderLayout());
+    statusPanel.add(counts, BorderLayout.NORTH);
+    statusPanel.add(notice, BorderLayout.CENTER);
 
-    JPanel buttonPanel = new JPanel();
-    buttonPanel.add(load);
-    buttonPanel.add(run);
-    buttonPanel.add(stop);
-    buttonPanel.add(reset);
-    buttonPanel.add(close);
-    load.addActionListener(myListener);
-    run.addActionListener(myListener);
-    stop.addActionListener(myListener);
-    reset.addActionListener(myListener);
-    close.addActionListener(myListener);
-
-    run.setEnabled(false);
-    stop.setEnabled(false);
-    reset.setEnabled(false);
+    final var runButtons = new JPanel();
+    runButtons.add(load);
+    runButtons.add(run);
+    runButtons.add(stop);
+    runButtons.add(reset);
+    final var viewButtons = new JPanel();
+    viewButtons.add(failuresOnly);
+    viewButtons.add(nextFailure);
+    viewButtons.add(explorer);
+    viewButtons.add(close);
+    final var buttonPanel = new JPanel();
+    buttonPanel.setLayout(new BoxLayout(buttonPanel, BoxLayout.Y_AXIS));
+    buttonPanel.add(runButtons);
+    buttonPanel.add(viewButtons);
+    for (final var button : new JButton[] {load, run, stop, reset, nextFailure, explorer, close}) {
+      button.addActionListener(myListener);
+    }
+    failuresOnly.addActionListener(myListener);
 
     Container contents = getContentPane();
-    panel.setPreferredSize(new Dimension(450, 300));
+    panel.setPreferredSize(new Dimension(560, 400));
     contents.add(statusPanel, BorderLayout.NORTH);
     contents.add(panel, BorderLayout.CENTER);
     contents.add(buttonPanel, BorderLayout.SOUTH);
@@ -119,25 +140,80 @@ public class TestFrame extends LFrame.SubWindowWithSimulation {
 
     menubar.setCircuitState(simulator, circuitState);
 
-    if (curModel != null) curModel.setSelected(false);
     if (curModel != null) curModel.removeModelListener(myListener);
 
     Model oldModel = curModel;
-    Model data = null;
-    if (simulator != null) {
-      data = modelMap.get(circuit);
-      if (data == null) {
-        data = new Model(project, circuit);
-        modelMap.put(data.getCircuit(), data);
+    curModel = theProject.getTestSuite().getModel(circuit);
+    curModel.addModelListener(myListener);
+    setTitle(computeTitle(curModel, project));
+    if (panel != null) {
+      panel.modelChanged(oldModel, curModel);
+      myListener.testingChanged();
+    }
+    repaint();
+  }
+
+  /** Lets the user choose a vector file for the current circuit, then runs it. */
+  private void loadVector() {
+    final var model = getModel();
+    if (model.getVectorFile() != null) chooser.setSelectedFile(model.getVectorFile());
+    int result = chooser.showOpenDialog(TestFrame.this);
+    if (result != JFileChooser.APPROVE_OPTION) return;
+    File file = chooser.getSelectedFile();
+    if (!file.exists() || !file.canRead() || file.isDirectory()) {
+      OptionPane.showMessageDialog(
+          TestFrame.this,
+          S.get("fileCannotReadMessage", file.getName()),
+          S.get("fileCannotReadTitle"),
+          OptionPane.OK_OPTION);
+      return;
+    }
+    project.getTestSuite().setVectorFile(model.getCircuit(), file);
+    if (model.getError() != null) {
+      OptionPane.showMessageDialog(
+          TestFrame.this,
+          S.get("fileWrongPinsMessage", file.getName(), model.getError()),
+          S.get("fileWrongPinsTitle"),
+          OptionPane.OK_OPTION);
+      return;
+    }
+    runModel();
+  }
+
+  private void runModel() {
+    try {
+      getModel().start();
+    } catch (TestException e) {
+      final var file = getModel().getVectorFile();
+      OptionPane.showMessageDialog(
+          TestFrame.this,
+          S.get("fileWrongPinsMessage", file == null ? "?" : file.getName(), e.getMessage()),
+          S.get("fileWrongPinsTitle"),
+          OptionPane.OK_OPTION);
+    }
+    if (getModel().getError() != null) myListener.testingChanged();
+  }
+
+  /** Text for the run time of a test. */
+  static String formatDuration(long nanos) {
+    return String.format(Locale.ROOT, "%.1f s", nanos / 1e9);
+  }
+
+  /** Path of a vector file as shown to the user: relative to the project's folder when inside it. */
+  static String displayPath(Project project, File file) {
+    if (file == null) return "";
+    final var path = file.getAbsoluteFile().toPath().normalize();
+    final var projectFile = project.getLogisimFile().getLoader().getMainFile();
+    if (projectFile != null && projectFile.getAbsoluteFile().getParentFile() != null) {
+      final var dir = projectFile.getAbsoluteFile().getParentFile().toPath().normalize();
+      try {
+        final var relative = dir.relativize(path).toString();
+        if (relative.length() < path.toString().length()) return relative;
+      } catch (IllegalArgumentException e) {
+        // on another drive
       }
     }
-    curModel = data;
-
-    if (curModel != null) curModel.addModelListener(myListener);
-    if (curModel != null) curModel.setSelected(true);
-    setTitle(computeTitle(curModel, project));
-    if (panel != null) panel.modelChanged(oldModel, curModel);
-    repaint();
+    return path.toString();
   }
 
   @Override
@@ -158,53 +234,20 @@ public class TestFrame extends LFrame.SubWindowWithSimulation {
       if (src == close) {
         requestClose();
       } else if (src == load) {
-        int result = chooser.showOpenDialog(TestFrame.this);
-        if (result != JFileChooser.APPROVE_OPTION) return;
-        File file = chooser.getSelectedFile();
-        if (!file.exists() || !file.canRead() || file.isDirectory()) {
-          OptionPane.showMessageDialog(
-              TestFrame.this,
-              S.get("fileCannotReadMessage", file.getName()),
-              S.get("fileCannotReadTitle"),
-              OptionPane.OK_OPTION);
-          return;
-        }
-        try {
-          TestVector vec = new TestVector(file);
-          finished = 0;
-          count = vec.data.size();
-          getModel().setVector(vec);
-          curFile = file;
-          getModel().setPaused(true);
-          getModel().start();
-        } catch (IOException e) {
-          OptionPane.showMessageDialog(
-              TestFrame.this,
-              S.get("fileCannotParseMessage", file.getName(), e.getMessage()),
-              S.get("fileCannotReadTitle"),
-              OptionPane.OK_OPTION);
-        } catch (TestException e) {
-          OptionPane.showMessageDialog(
-              TestFrame.this,
-              S.get("fileWrongPinsMessage", file.getName(), e.getMessage()),
-              S.get("fileWrongPinsTitle"),
-              OptionPane.OK_OPTION);
-        }
+        loadVector();
       } else if (src == run) {
-        try {
-          getModel().start();
-        } catch (TestException e) {
-          OptionPane.showMessageDialog(
-              TestFrame.this,
-              S.get("fileWrongPinsMessage", curFile.getName(), e.getMessage()),
-              S.get("fileWrongPinsTitle"),
-              OptionPane.OK_OPTION);
-        }
+        runModel();
       } else if (src == stop) {
-        getModel().setPaused(true);
+        getModel().stop();
       } else if (src == reset) {
         getModel().clearResults();
-        testingChanged();
+      } else if (src == failuresOnly) {
+        panel.setFailuresOnly(failuresOnly.isSelected());
+      } else if (src == nextFailure) {
+        panel.selectNextFailure();
+      } else if (src == explorer) {
+        project.getTestExplorerFrame().setVisible(true);
+        project.getTestExplorerFrame().toFront();
       }
     }
 
@@ -217,7 +260,10 @@ public class TestFrame extends LFrame.SubWindowWithSimulation {
       stop.setText(S.get("stopButton"));
       reset.setText(S.get("resetButton"));
       close.setText(S.get("closeButton"));
-      myListener.testResultsChanged(getModel().getPass(), getModel().getFail());
+      failuresOnly.setText(S.get("testFailuresOnly"));
+      nextFailure.setText(S.get("testNextFailure"));
+      explorer.setText(S.get("testExplorerButton"));
+      testingChanged();
       windowManager.localeChanged();
     }
 
@@ -233,29 +279,41 @@ public class TestFrame extends LFrame.SubWindowWithSimulation {
 
     @Override
     public void testingChanged() {
-      if (getModel().isRunning() && !getModel().isPaused()) {
-        run.setEnabled(false);
-        stop.setEnabled(true);
-      } else if (getModel().getVector() != null && finished != count) {
-        run.setEnabled(true);
-        stop.setEnabled(false);
-      } else {
-        run.setEnabled(false);
-        stop.setEnabled(false);
-      }
-      reset.setEnabled(getModel().getVector() != null && finished > 0);
+      final var model = getModel();
+      if (model == null) return;
+      final var hasVector = model.getVector() != null;
+      final var running = model.isRunning();
+      final var done = model.getPass() + model.getFail();
+      run.setEnabled(hasVector && !running || model.getError() != null);
+      stop.setEnabled(running);
+      reset.setEnabled(hasVector && !running && done > 0);
+      nextFailure.setEnabled(model.getFail() > 0);
+      testResultsChanged(model.getPass(), model.getFail());
+      final var file = model.getVectorFile();
+      var fileText = file == null ? "" : S.get("testFileLabel", displayPath(project, file));
+      if (model.getRunNanos() > 0) fileText += " · " + formatDuration(model.getRunNanos());
+      fileLabel.setText(fileText);
+      final var text = switch (model.getStatus()) {
+        case NO_VECTOR -> S.get("testNoVectorMessage", model.getCircuit().getName());
+        case ERROR -> S.get("testErrorMessage", file == null ? "" : file.getName(), model.getError());
+        case OUTDATED -> S.get("testOutdatedMessage");
+        case STOPPED -> S.get("testStoppedMessage", Integer.toString(done), Integer.toString(model.getRowCount()));
+        default -> null;
+      };
+      notice.setText(text == null ? "" : text);
+      notice.setVisible(text != null);
     }
 
     @Override
     public void testResultsChanged(int numPass, int numFail) {
       pass.setText(S.get("passMessage", Integer.toString(numPass)));
       fail.setText(S.get("failMessage", Integer.toString(numFail)));
-      finished = numPass + numFail;
+      nextFailure.setEnabled(numFail > 0);
     }
 
     @Override
     public void vectorChanged() {
-      // do nothing
+      testingChanged();
     }
   }
 
