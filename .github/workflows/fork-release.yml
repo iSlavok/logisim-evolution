@@ -171,10 +171,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ls -la dist
+          mapfile -t files < <(find dist -type f | sort)
+          printf '%s\n' "${files[@]}"
           tag="${GITHUB_REF_NAME}"
           if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then tag="v$(grep '^version' gradle.properties | awk '{print $3}')"; fi
           notes=".github/fork-release-notes.md"
           gh release view "$tag" >/dev/null 2>&1 && gh release delete "$tag" --yes
-          gh release create "$tag" dist/* --draft --verify-tag \
+          gh release create "$tag" "${files[@]}" --draft --verify-tag \
             --title "Logisim-evolution ${tag#v} (unofficial fork build)" --notes-file "$notes"
