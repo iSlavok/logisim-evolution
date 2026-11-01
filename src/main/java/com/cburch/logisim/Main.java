@@ -13,6 +13,7 @@ import com.cburch.logisim.generated.BuildInfo;
 import com.cburch.logisim.gui.generic.OptionPane;
 import com.cburch.logisim.gui.start.Startup;
 import com.cburch.logisim.prefs.AppPreferences;
+import com.cburch.logisim.util.MacCompatibility;
 import com.formdev.flatlaf.FlatDarculaLaf;
 import com.formdev.flatlaf.FlatDarkLaf;
 import com.formdev.flatlaf.FlatIntelliJLaf;
@@ -28,6 +29,8 @@ import javax.swing.UnsupportedLookAndFeelException;
 import javax.swing.plaf.FontUIResource;
 
 public class Main {
+  private static final String MAC_APPEARANCE = "apple.awt.application.appearance";
+
   /**
    * Application entry point.
    *
@@ -40,6 +43,14 @@ public class Main {
     // System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "debug");
 
     System.setProperty("apple.awt.application.name", BuildInfo.name);
+    // Native dialogs, such as the macOS file chooser, take the application's appearance, which is
+    // light for a plain "java" process. Match the chosen look and feel unless the user set it.
+    if (MacCompatibility.isRunningOnMac() && System.getProperty(MAC_APPEARANCE) == null) {
+      System.setProperty(MAC_APPEARANCE,
+          AppPreferences.isDarkTheme(AppPreferences.LookAndFeel.get())
+              ? "NSAppearanceNameDarkAqua"
+              : "NSAppearanceNameAqua");
+    }
     try {
       if (!GraphicsEnvironment.isHeadless()) {
         FlatLightLaf.installLafInfo();
